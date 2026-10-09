@@ -28,9 +28,9 @@ jobs:
           python-version: "3.12"
       - name: 生成静态快照
         run: python export.py         # 产出 site/data.json + 复制前端
+      # 需先在 仓库 Settings → Pages → Source 手动选 "GitHub Actions"(见 README)；
+      # 站点存在后 configure-pages 只需读取,无需以 token 创建,避免权限报错。
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true      # 自动为本仓库开启 Pages(来源=GitHub Actions)，免去手动到 Settings 设置
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
