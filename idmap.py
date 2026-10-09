@@ -48,19 +48,23 @@ def _ensure_file(kind: str) -> str | None:
     url = f"{cfg.idmap_base}/{FILES[kind]}"
     req = urllib.request.Request(url, headers={"User-Agent": cfg.user_agent})
     tmp = path + ".part"
-    try:
-        with urllib.request.urlopen(req, timeout=cfg.request_timeout_sec * 4) as resp:
-            data = resp.read()
-        json.loads(data)  # 校验完整性，避免落半个文件
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        _status.update(state="error", message=f"下载 {kind} 映射失败:{type(exc).__name__}")
-        return None
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
-    return path
+    last = "unknown"
+    for attempt in range(3):  # CI 上偶发抖动重试；下载后校验 JSON 完整性再原子落盘
+        try:
+            with urllib.request.urlopen(req, timeout=cfg.request_timeout_sec * 4) as resp:
+                data = resp.read()
+            json.loads(data)
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+            return path
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last = type(exc).__name__
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            __import__("time").sleep(2 * (attempt + 1))
+    _status.update(state="error", message=f"下载 {kind} 映射失败:{last}")
+    return None
 
 
 def import_catalog() -> dict[str, Any]:

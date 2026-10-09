@@ -35,14 +35,20 @@ def _load_json_local(rel: str):
 
 
 def _ensure_datasets():
-    """确保 ID-Mapper 与聚合快照在本地存在(缺则下载)。返回 (buff_id_map, steam_map, agg_steam, agg_buff)。"""
+    """确保 ID-Mapper 与聚合快照在本地存在(缺则从公开源下载)，供干净 CI 环境使用。
+    返回 (buff_id_map, steam_meta_map, agg_steam, agg_buff)。"""
+    import idmap
+
     agg.ensure_loaded()
-    idmap_dir = config.get_config().idmap_dir
-    load = lambda k: _load_json_local(os.path.join(idmap_dir, f"{k}.730.json"))
-    for kind, fname in (("buff", "buff.730.json"), ("steam", "steam.730.json")):
-        if load(kind) is None:
-            raise SystemExit(f"缺少 ID-Mapper: {fname}，请先运行 server 或手动下载到 {idmap_dir}/")
-    return load("buff"), load("steam"), agg._cache["steam"], agg._cache["buff"]
+    # ID-Mapper：export 需要 buff(goods_id 映射) 与 steam(中文名)；缺文件则下载。
+    for kind in ("buff", "steam"):
+        if idmap._ensure_file(kind) is None:
+            raise SystemExit(f"ID-Mapper 下载失败({kind})：无法生成快照")
+    buff_id_map = _load_json_local(os.path.join(config.get_config().idmap_dir, "buff.730.json"))
+    steam_meta = _load_json_local(os.path.join(config.get_config().idmap_dir, "steam.730.json"))
+    if buff_id_map is None or steam_meta is None:
+        raise SystemExit("ID-Mapper 文件缺失/损坏")
+    return buff_id_map, steam_meta, agg._cache["steam"], agg._cache["buff"]
 
 
 def _read_hotlist() -> list[str]:
