@@ -1,0 +1,6 @@
+# 关注列表：每行一个 market_hash_name（这些件走实时抓取）
+# GitHub Actions 的境外 runner 能直连 Steam，这里会算出精确国服比例；
+# 本机直连 Steam 被墙时，自动回落为 "BUFF实时 + 全球估 Steam"。
+AK-47 | Redline (Field-Tested)
+AWP | Asiimov (Field-Tested)
+M4A4 | Howl (Minimal Wear)

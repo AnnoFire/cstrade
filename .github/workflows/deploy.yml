@@ -1,0 +1,44 @@
+name: 定时刷新并发布到 GitHub Pages
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"      # 约每 10 分钟(Actions 调度可能有几分钟延迟)
+  workflow_dispatch: {}          # 允许手动触发
+  push:
+    branches: [main]
+    paths: ["hotlist.txt", "export.py", "web/**", ".github/workflows/deploy.yml"]
+
+# 纯静态、免登录：不含任何 secrets / cookie
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest          # 境外 runner：可直连 Steam → 热榜件得到国服精确价
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 生成静态快照
+        run: python export.py         # 产出 site/data.json + 复制前端
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

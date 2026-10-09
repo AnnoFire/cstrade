@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CS2 挂刀行情（本机）</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="title">CS2 挂刀行情</div>
+    <div id="status" class="status">加载数据源状态…</div>
+    <button id="refresh" class="btn" title="重新抓取 BUFF 目录">刷新目录</button>
+  </header>
+
+  <section class="controls">
+    <input id="q" type="search" placeholder="搜索饰品：英文名或中文名，如 AK-47 | Redline / 红线" autocomplete="off">
+    <label class="sort">排序
+      <select id="sort">
+        <option value="ratio">余额比例（高→低）</option>
+        <option value="min_sell">BUFF 最低价（低→高）</option>
+      </select>
+    </label>
+    <label class="auto"><input type="checkbox" id="auto" checked> 自动刷新
+      <select id="interval">
+        <option value="60">60s</option>
+        <option value="300" selected>5min</option>
+        <option value="900">15min</option>
+        <option value="3600">1h</option>
+      </select>
+    </label>
+    <button id="go" class="btn primary">搜索</button>
+  </section>
+
+  <p class="tick" id="tick"></p>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <p class="hint">比例已按 Steam 实际舍入规则精确估算（5% + 10%，逐分反解）；Steam 余额不等于现金，交易前请跳回平台核对挂单、磨损/相位与规则。</p>
+
+  <main>
+    <table class="grid">
+      <thead>
+        <tr>
+          <th>饰品</th>
+          <th>BUFF 最低卖</th>
+          <th>在售量</th>
+          <th>UU 报价</th>
+          <th>Steam 参考价</th>
+          <th>估算净入账</th>
+          <th>余额比例</th>
+          <th>链接</th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+        <tr class="empty"><td colspan="8">输入关键词开始搜索</td></tr>
+      </tbody>
+    </table>
+  </main>
+
+  <div id="detail" class="drawer" hidden>
+    <div class="drawer-head">
+      <span id="detail-title"></span>
+      <button id="detail-close" class="btn">关闭</button>
+    </div>
+    <div id="detail-body" class="drawer-body"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

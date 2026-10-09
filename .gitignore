@@ -1,0 +1,33 @@
+# ── 运行期生成/下载的数据（免登录源产物，不入库）──
+# data/：ID-Mapper、聚合快照、SQLite 缓存（首次运行自动重建）
+# site/：export.py 产物：静态站 + data.json（由 GitHub Actions 生成并发布）
+# docs/：早期误生成的构建产物残留
+data/
+site/
+docs/
+
+# ── 研究/勘察临时产物 ──
+# recon/：上游脚本副本(版权/许可存疑)、原始大快照、数据源矩阵，非本项目源码
+recon/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# ── 系统 / 编辑器 ──
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ── 凭据红线(方案 §6)：万一将来引入，严禁入库 ──
+*.cookie
+*cookie*.txt
+secrets/
+**/buff_cookie.txt
+**/uuyp_*.txt
+.env
+.env.*
