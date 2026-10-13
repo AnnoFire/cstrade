@@ -114,6 +114,14 @@ class Config:
         # Steam 市场币种：23 = CNY（与 BUFF 人民币价同币种，比例无需换算）。
         self.steam_currency = _get_int("STEAM_CURRENCY", default=23, minimum=1, maximum=40)
 
+        # 精确榜构建（仅在有 Steam 出口的 runner 上生效）：
+        # 先按全球估排候选，逐件抓前 board_size 件的 Steam volume+国服最低价，
+        # 过滤 24h 成交量 ≥ min_volume 后进入"精确榜"。件数越大越慢、越易被 Steam 限流。
+        self.board_size = _get_int("BOARD_SIZE", default=80, minimum=0, maximum=400)
+        self.min_volume = _get_int("MIN_VOLUME", default=3000, minimum=0, maximum=1000000)
+        # 候选预筛：忽略低于此 BUFF 价(¥)的杂物(贴纸/几毛件),避免把抓取额度浪费在垃圾上。
+        self.min_buff_cny = _get_float("MIN_BUFF_CNY", default=3.0, minimum=0.0, maximum=1000.0)
+
         # 可选海外 HTTP 代理（仅用于访问 Steam），格式 host:port。缺省即视为无代理。
         self.steam_proxy = _get_opt_str("CSTRADE_STEAM_PROXY")
 
@@ -123,8 +131,8 @@ class Config:
         self.backoff_base_sec = _get_int(
             "BACKOFF_BASE_SEC", default=10, minimum=1, maximum=120
         )
-        # Steam 官方对匿名高频较敏感，单次搜索内的请求间隔保守一些。
-        self.steam_delay_sec = _get_int("STEAM_DELAY_SEC", default=3, minimum=1, maximum=30)
+        # Steam 官方对匿名高频较敏感，逐件抓取之间保守限速。
+        self.steam_delay_sec = _get_int("STEAM_DELAY_SEC", default=2, minimum=1, maximum=30)
 
         self.user_agent = _get_str(
             "CSTRADE_UA",

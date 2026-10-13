@@ -19,6 +19,7 @@ import time
 
 import agg
 import buff
+import classify
 import config
 import steam
 import steam_fee
@@ -60,7 +61,7 @@ def _read_hotlist() -> list[str]:
 
 
 def _row(hash_name, cn, goods_id, agg_steam_map, agg_buff_map, fx, mode="auto",
-         buff_min=None, steam_cny=None, sell_num=None, listing=None, src_ts=None):
+         buff_min=None, steam_cny=None, sell_num=None, listing=None, src_ts=None, volume=None):
     # 缺失侧用聚合快照(美元→CNY)兜底，兜底即标 global。
     g = agg_steam_map.get(hash_name)
     b = agg_buff_map.get(hash_name)
@@ -81,6 +82,7 @@ def _row(hash_name, cn, goods_id, agg_steam_map, agg_buff_map, fx, mode="auto",
         "goods_id": goods_id,
         "market_hash_name": hash_name,
         "name_cn": cn,
+        "cat": classify.category(hash_name, cn),
         "buff_min_sell": buff_min,
         "sell_num": sell_num,
         "listing_count": listing,
@@ -89,6 +91,7 @@ def _row(hash_name, cn, goods_id, agg_steam_map, agg_buff_map, fx, mode="auto",
         "steam_net_est": net,
         "ratio_pct": ratio,
         "steam_mode": mode,  # exact | global
+        "volume": volume,    # Steam 24h 成交量(仅抓过的件有值)
     }
 
 
@@ -97,7 +100,6 @@ def build() -> int:
     fx = cfg.fx_usd_cny
     buff_id_map, steam_meta, agg_steam, agg_buff = _ensure_datasets()
     hot = _read_hotlist()
-    hotset = set(hot)
 
     out_dir = os.path.join(_ROOT, cfg.export_dir)
     os.makedirs(out_dir, exist_ok=True)
@@ -113,12 +115,12 @@ def build() -> int:
         if not so.get("ok") or not so["data"]["buff_min_sell"]:
             continue  # 实时取不到就留给全量兜底
         d = so["data"]
-        st = steam.fetch_priceoverview(hn)  # 境外 runner 可得国服价
+        st = steam.fetch_priceoverview(hn)  # 境外 runner 可得国服价+成交量
         if st.get("ok") and st.get("lowest_sell") is not None:
             row = _row(hn, cn, gid, agg_steam, agg_buff, fx, "exact",
                        buff_min=d["buff_min_sell"], sell_num=d["sell_num"],
                        listing=d["listing_count"], src_ts=d["source_updated_at"],
-                       steam_cny=st["lowest_sell"])
+                       steam_cny=st["lowest_sell"], volume=st.get("volume"))
         else:
             row = _row(hn, cn, gid, agg_steam, agg_buff, fx, "global",
                        buff_min=d["buff_min_sell"], sell_num=d["sell_num"],
@@ -126,25 +128,54 @@ def build() -> int:
         if row:
             by_hash[hn] = row
 
-    # 再处理全量(跳过已在 hotlist 精确档的)
-    count = len(by_hash)
+    # 全量：聚合全球估(一次覆盖全部，无逐件网络)
     for hn, gid in buff_id_map.items():
         if not isinstance(gid, int) or gid <= 0 or hn in by_hash:
             continue
-        g = agg_steam.get(hn)
-        b = agg_buff.get(hn)
-        if not (g and b):
+        if not (agg_steam.get(hn) and agg_buff.get(hn)):
             continue
         cn = (steam_meta.get(hn) or {}).get("cn_name")
         row = _row(hn, cn, gid, agg_steam, agg_buff, fx, "global")
         if row:
             by_hash[hn] = row
-            count += 1
 
+    # 精确榜候选：全球估里挑"价格不太垃圾"的，按比例取前 board_size 件，逐件抓 Steam。
+    # 另把"箱子类"前 board_size 也并入(箱子件全球估比例偏低，不并入就轮不到抓 Steam)。
+    steam_ok = False
+    if cfg.board_size > 0:
+        pool = [
+            r for r in by_hash.values()
+            if r["steam_mode"] == "global" and (r["buff_min_sell"] or 0) >= cfg.min_buff_cny
+            and r["ratio_pct"] is not None
+        ]
+
+        def _rank(items):
+            return sorted(items, key=lambda r: -(r["ratio_pct"] or 0))[: cfg.board_size]
+
+        chosen = _rank(pool) + [r for r in _rank([x for x in pool if x.get("cat") == "box"])]
+        seen = set()
+        cands = [r for r in chosen if not (id(r) in seen or seen.add(id(r)))]
+        for r in cands:
+            st = steam.fetch_priceoverview(r["market_hash_name"])
+            if not st.get("ok"):
+                continue
+            steam_ok = True
+            r["volume"] = st.get("volume")
+            if st.get("lowest_sell") is not None:
+                r["steam_ref_cny"] = st["lowest_sell"]
+                r["steam_mode"] = "exact"
+                net = steam_fee.calculate_after_fee(st["lowest_sell"])
+                r["steam_net_est"] = net
+                r["ratio_pct"] = steam_fee.balance_ratio(net, r["buff_min_sell"])
+            time.sleep(cfg.steam_delay_sec)  # 保守限速，降低被 Steam 限流概率
+
+    exact_cnt = sum(1 for r in by_hash.values() if r["steam_mode"] == "exact")
     data = {
         "generated_at": time.time(),
         "fx_usd_cny": fx,
-        "steam_mode": "proxy_or_runner" if any(r["steam_mode"] == "exact" for r in by_hash.values()) else "global",
+        "steam_mode": "proxy_or_runner" if exact_cnt else "global",
+        "steam_ok": bool(steam_ok or exact_cnt),
+        "min_volume": cfg.min_volume,
         "hotlist_size": len(hot),
         "count": len(by_hash),
         "items": list(by_hash.values()),
@@ -164,7 +195,7 @@ def build() -> int:
     if domain:
         with open(os.path.join(out_dir, "CNAME"), "w") as f:
             f.write(domain + "\n")
-    return count
+    return data["count"]
 
 
 if __name__ == "__main__":

@@ -21,6 +21,15 @@
         <option value="min_sell">BUFF 最低价（低→高）</option>
       </select>
     </label>
+    <label class="sort">范围
+      <select id="scope">
+        <option value="all">全部</option>
+        <option value="box">仅箱子/容器</option>
+      </select>
+    </label>
+    <label class="sort">≥成交量
+      <input id="minvol" type="number" min="0" step="100" value="3000" style="width:82px">
+    </label>
     <label class="auto"><input type="checkbox" id="auto" checked> 自动刷新
       <select id="interval">
         <option value="60">60s</option>
@@ -45,6 +54,7 @@
           <th>饰品</th>
           <th>BUFF 最低卖</th>
           <th>在售量</th>
+          <th>24h量</th>
           <th>UU 报价</th>
           <th>Steam 参考价</th>
           <th>估算净入账</th>
@@ -53,18 +63,10 @@
         </tr>
       </thead>
       <tbody id="rows">
-        <tr class="empty"><td colspan="8">输入关键词开始搜索</td></tr>
+        <tr class="empty"><td colspan="9">载入中…</td></tr>
       </tbody>
     </table>
   </main>
-
-  <div id="detail" class="drawer" hidden>
-    <div class="drawer-head">
-      <span id="detail-title"></span>
-      <button id="detail-close" class="btn">关闭</button>
-    </div>
-    <div id="detail-body" class="drawer-body"></div>
-  </div>
 
   <script src="app.js"></script>
 </body>

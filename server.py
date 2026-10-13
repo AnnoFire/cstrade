@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import agg
 import buff
 import catalog
+import classify
 import config
 import idmap
 import steam
@@ -93,6 +94,7 @@ def _build_row(cat: dict, _ignored=None) -> dict:
         "market_hash_name": cat["market_hash_name"],
         "name_cn": cat["cn_name"],
         "uuyp_id": cat.get("uuyp_id"),
+        "cat": classify.category(cat["market_hash_name"], cat.get("cn_name")),
         "buff_url": f"https://buff.163.com/market/s/{cat['goods_id']}",
         "steam_url": _steam_listing_url(cat["market_hash_name"]),
     }
@@ -115,6 +117,51 @@ def _build_row(cat: dict, _ignored=None) -> dict:
         row["steam_ref_time"] = agg.snapshot_updated_at()
     steam_fee.decorate(row, None)
     return row
+
+
+def _global_row(cat: dict) -> dict | None:
+    """用聚合快照(全球估)为一条目录项构造行；无价返回 None。"""
+    cfg = config.get_config()
+    pair = agg.lookup_usd(cat["market_hash_name"])
+    if not pair:
+        return None
+    fx = cfg.fx_usd_cny
+    row = {
+        "goods_id": cat["goods_id"],
+        "market_hash_name": cat["market_hash_name"],
+        "name_cn": cat.get("cn_name"),
+        "cat": classify.category(cat["market_hash_name"], cat.get("cn_name")),
+        "buff_min_sell": round(pair["buff_usd"] * fx, 2),
+        "sell_num": None, "listing_count": None, "source_updated_at": None,
+        "steam_ref_cny": round(pair["steam_usd"] * fx, 2),
+        "steam_mode": "global",
+        "buff_status": "ok",
+    }
+    steam_fee.decorate(row, None)
+    return row
+
+
+def _top_payload(limit: int, scope: str = "all") -> dict:
+    """全局最佳比例榜（聚合口径，每日新鲜）。scope=box 只排箱子/容器类。
+    成交量需逐件抓 Steam，本机无出口时只能按最低价去噪(挡掉几分钱贴纸等垃圾)。"""
+    cfg = config.get_config()
+    rows = []
+    for cat in store.get_store().all_catalog():
+        if scope == "box" and not classify.category(cat["market_hash_name"], cat.get("cn_name")):
+            continue
+        r = _global_row(cat)
+        if r and (r["buff_min_sell"] or 0) >= cfg.min_buff_cny:
+            rows.append(r)
+    rows.sort(key=lambda r: (r["ratio_pct"] is None, -(r["ratio_pct"] or 0)))
+    return {
+        "ok": True,
+        "count": len(rows),
+        "items": rows[:limit],
+        "sort": "ratio",
+        "scope": scope,
+        "volume_filtered": False,   # 本地无 Steam 出口，未做真成交量过滤
+        "min_buff_cny": cfg.min_buff_cny,
+    }
 
 
 def _search_payload(keyword: str, sort: str) -> dict:
@@ -181,11 +228,16 @@ def _status_payload() -> dict:
     st = catalog.get_status()
     cfg = config.get_config()
     imported = db.get_meta("catalog_imported_at")
+    indexed = db.catalog_count()
     agg_st = agg.get_status()
     steam_mode = "proxy" if cfg.steam_proxy else ("global" if agg_st.get("state") == "ready" else "none")
+    # 数据已在库(重启常见)但本次进程未触发导入时，状态显示为就绪而非 idle。
+    state = st["state"]
+    if state in ("idle",) and indexed > 0:
+        state = "ready"
     return {
         "ok": True,
-        "catalog_state": st["state"],
+        "catalog_state": state,
         "catalog_message": st["message"],
         "catalog_imported_at": float(imported) if imported else None,
         "indexed_items": db.catalog_count(),
@@ -243,6 +295,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/api/status":
             self._send_json(_status_payload())
+            return
+        if route == "/api/top":
+            try:
+                n = int(q.get("limit", "40"))
+            except ValueError:
+                n = 40
+            scope = "box" if q.get("scope") == "box" else "all"
+            self._send_json(_top_payload(max(5, min(n, 200)), scope))
             return
         if route == "/api/search":
             keyword = q.get("q", "").strip()

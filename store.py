@@ -89,6 +89,11 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def all_catalog(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT goods_id, market_hash_name, cn_name FROM catalog"
+        ).fetchall()]
+
     # ---- BUFF 实时价缓存 ----
     def get_buff_price(self, goods_id: int, ttl: float) -> dict | None:
         row = self._conn.execute(

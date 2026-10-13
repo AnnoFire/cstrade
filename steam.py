@@ -70,10 +70,12 @@ def fetch_priceoverview(market_hash_name: str) -> dict:
             # 无挂单/低流动性：明确失败语义，不返回 0 价。
             return {"ok": False, "reason": "no_market_data"}
 
+        vol = _parse_money(payload.get("volume"))
         return {
             "ok": True,
             "lowest_sell": _parse_money(payload.get("lowest_price")),
             "median": _parse_money(payload.get("median_price")),
+            "volume": int(vol) if vol is not None else None,
             "currency": cfg.steam_currency,
         }
 

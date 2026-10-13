@@ -2,7 +2,7 @@ name: 定时刷新并发布到 GitHub Pages
 
 on:
   schedule:
-    - cron: "*/10 * * * *"      # 约每 10 分钟(Actions 调度可能有几分钟延迟)
+    - cron: "*/20 * * * *"      # 每 20 分钟一轮(需为逐件抓 Steam 留时间;调度可能再延迟几分钟)
   workflow_dispatch: {}          # 允许手动触发
   push:
     branches: [main]

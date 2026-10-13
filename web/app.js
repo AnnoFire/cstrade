@@ -6,13 +6,6 @@ const BUFF_URL = (id) => `https://buff.163.com/market/s/${id}`;
 const STEAM_URL = (hash) => `https://steamcommunity.com/market/listings/730/${encodeURIComponent(hash)}`;
 function fmtTime(ts) { return ts ? new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour12: false }) : "源站未提供"; }
 function hhmmss(d) { return d.toTimeString().slice(0, 8); }
-function ageInfo(ts, now) {
-  if (!ts) return { label: "源站未提供时间", cls: "warn" };
-  const a = now - ts;
-  if (a < 10 * 60) return { label: "正常", cls: "ok" };
-  if (a < 60 * 60) return { label: "延迟", cls: "warn" };
-  return { label: "已过期", cls: "stale" };
-}
 function esc(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 // ---- 运行模式 ----
@@ -20,7 +13,7 @@ let MODE = "server";     // server | static
 let ALL = [];            // static 全量
 let META = {};           // static 元信息
 let LAST_MOD = null;     // data.json 的 Last-Modified，用于条件请求避免重复下载
-const state = { keyword: "", sort: "ratio", nextAt: 0, lastAt: null, openId: null, timer: null };
+const state = { keyword: "", sort: "ratio", nextAt: 0, lastAt: null, timer: null };
 const STATIC_LIMIT = 40; // 静态模式客户端最多渲染多少条(性能)
 
 async function fetchJson(url, opt) {
@@ -46,11 +39,13 @@ async function loadData(force) {
 async function boot() {
   try {
     const s = await fetchJson("api/status");
-    if (s && s.ok) { MODE = "server"; await loadStatus(); return; }
+    if (s && s.ok) { MODE = "server"; await loadStatus(); await runSearch(false); startLoop(); return; }
   } catch (e) { /* 静态部署：没有 /api */ }
   MODE = "static";
   await loadData(true);
   await loadStatus();
+  await runSearch(false);   // 打开即按最佳比例降序列出榜单
+  startLoop();
 }
 
 async function loadStatus() {
@@ -61,8 +56,8 @@ async function loadStatus() {
   const banner = $("#banner");
   if (META.steam_mode !== "proxy_or_runner") {
     banner.hidden = false; banner.className = "banner warnbox";
-    banner.innerHTML = "数据为定时快照，非实时。比例口径为<b>全球估算(偏乐观)</b>：全量来自聚合快照；" +
-      "仅<b>关注列表</b>的件在境外 runner 上会抓成国服精确价(标『精确』)。GitHub Actions 约每 5~15 分钟刷新一次。";
+    banner.innerHTML = "当前为<b>全球估算(偏乐观)</b>、每日快照。默认榜只收“已知 24h 成交量 ≥ 阈值”的精确件——" +
+      "需在能连 Steam 的境外 GitHub Actions runner 上构建才会填充；本机/无出口时默认榜为空，搜索仍可用。";
   } else {
     banner.hidden = false; banner.className = "banner okbox";
     banner.textContent = "本次快照含关注列表的国服精确价；其余为全量估算。";
@@ -78,7 +73,7 @@ async function loadStatusServer() {
   if (s.catalog_state === "error") { banner.hidden = false; banner.className = "banner errbox"; banner.textContent = s.catalog_message || "ID-Mapper 导入失败。"; }
   else if (s.catalog_state !== "ready") { banner.hidden = false; banner.className = "banner warnbox"; banner.textContent = "正在初始化目录索引与聚合快照，首次下载稍候。"; }
   else if (s.steam_mode === "proxy") { banner.hidden = true; }
-  else if (s.steam_mode === "global") { banner.hidden = false; banner.className = "banner warnbox"; banner.innerHTML = "免登录已跑通。<b>比例为全球估算(偏高)</b>，仅供排序；配代理则自动切换国服精确。"; }
+  else if (s.steam_mode === "global") { banner.hidden = false; banner.className = "banner warnbox"; banner.innerHTML = "<b>比例为全球估算(偏高)</b>，仅供排序参考；连接 Steam 出口后自动切换国服精确值。"; }
   else { banner.hidden = false; banner.className = "banner warnbox"; banner.textContent = "聚合快照未就绪，比例暂缺；BUFF 实时价仍可用。"; }
 }
 
@@ -92,10 +87,12 @@ function renderRows(items) {
   $("#rows").innerHTML = items.map((it) => {
     const name = it.name_cn || it.market_hash_name;
     const hash = it.name_cn ? it.market_hash_name : "";
+    const ts = it.source_updated_at ? ` <span class="tstamp">· ${fmtTime(it.source_updated_at)}</span>` : "";
     const buff = it.buff_status === "ok" || it.buff_min_sell != null ? priceCell(it.buff_min_sell) : `<span class="none">获取失败</span>`;
-    return `<tr data-id="${it.goods_id}">
-      <td class="item"><div class="cn">${esc(name)}</div><div class="hash">${esc(hash)}</div></td>
+    return `<tr>
+      <td class="item"><div class="cn">${esc(name)}</div><div class="hash">${esc(hash)}${ts}</div></td>
       <td>${buff}</td><td>${it.sell_num ?? `<span class="none">--</span>`}</td>
+      <td>${it.volume != null ? Number(it.volume).toLocaleString() : `<span class="none">—</span>`}</td>
       <td><span class="none">暂无报价</span></td>
       <td>${steamCell(it)}</td><td>${netCell(it)}</td><td>${ratioCell(it)}</td>
       <td class="links"><a href="${it.buff_url || BUFF_URL(it.goods_id)}" target="_blank" rel="noopener">BUFF</a>
@@ -104,9 +101,20 @@ function renderRows(items) {
   }).join("");
 }
 
-function staticSearch(q, sort) {
-  const kw = q.toLowerCase();
-  let rows = ALL.filter((it) => (it.market_hash_name || "").toLowerCase().includes(kw) || (it.name_cn || "").toLowerCase().includes(kw));
+function minVol() { return +($("#minvol").value || 0); }
+
+function staticSearch(q, sort, scope) {
+  const mv = minVol(), kw = q.toLowerCase(), box = scope === "box";
+  let rows;
+  if (!q) {
+    // 默认榜：箱子范围 + "已知成交量且 ≥ 阈值"的精确件（需能连 Steam 的 runner 才有）
+    rows = ALL.filter((it) => (!box || it.cat === "box") && it.volume != null && it.volume >= mv);
+  } else {
+    rows = ALL.filter((it) => (it.market_hash_name || "").toLowerCase().includes(kw)
+      || (it.name_cn || "").toLowerCase().includes(kw));
+    if (box) rows = rows.filter((it) => it.cat === "box");
+    rows = rows.filter((it) => it.volume == null || it.volume >= mv); // 未知成交量的仍保留
+  }
   if (sort === "min_sell") rows.sort((a, b) => (a.buff_min_sell == null) - (b.buff_min_sell == null) || (a.buff_min_sell || 0) - (b.buff_min_sell || 0));
   else rows.sort((a, b) => (a.ratio_pct == null) - (b.ratio_pct == null) || (b.ratio_pct || 0) - (a.ratio_pct || 0));
   return rows.slice(0, STATIC_LIMIT);
@@ -114,21 +122,28 @@ function staticSearch(q, sort) {
 
 async function runSearch(silent) {
   const q = $("#q").value.trim();
-  if (!q) return;
+  const scope = $("#scope").value;
   state.keyword = q; state.sort = $("#sort").value;
-  if (!silent) $("#rows").innerHTML = `<tr class="empty"><td colspan="8">搜索中…</td></tr>`;
+  if (!silent) $("#rows").innerHTML = `<tr class="empty"><td colspan="9">${q ? "搜索中…" : (scope === "box" ? "载入箱子榜…" : "载入最佳榜…")}</td></tr>`;
   let items;
   if (MODE === "server") {
-    const res = await fetchJson(`/api/search?q=${encodeURIComponent(q)}&sort=${state.sort}`);
-    if (!res.ok) { if (!silent) $("#rows").innerHTML = `<tr class="empty"><td colspan="8">出错：${esc(res.reason)}</td></tr>`; return; }
+    const url = q ? `/api/search?q=${encodeURIComponent(q)}&sort=${state.sort}` : `/api/top?limit=40&scope=${scope}`;
+    const res = await fetchJson(url);
+    if (!res.ok) { if (!silent) $("#rows").innerHTML = `<tr class="empty"><td colspan="9">出错：${esc(res.reason)}</td></tr>`; return; }
     items = res.items;
+    if (q && scope === "box") items = items.filter((it) => it.cat === "box");
   } else {
-    items = staticSearch(q, state.sort);
+    items = staticSearch(q, state.sort, scope);
   }
-  if (!items.length) { $("#rows").innerHTML = `<tr class="empty"><td colspan="8">无匹配结果</td></tr>`; return; }
+  if (!items.length) {
+    const msg = (!q && MODE === "static")
+      ? "默认榜需“已知成交量≥阈值”的件——本机无 Steam 出口时为空，部署到境外 runner 后自动填充"
+      : "无匹配结果";
+    $("#rows").innerHTML = `<tr class="empty"><td colspan="9">${msg}</td></tr>`;
+    return;
+  }
   renderRows(items);
   state.lastAt = new Date();
-  if (state.openId != null) openDetail(state.openId, true);
 }
 
 // ---- 自动刷新 ----
@@ -156,49 +171,17 @@ function paintTick() {
   $("#tick").innerHTML = `自动刷新 · ${last} · <b>${secs}s</b> 后${MODE === "static" ? "重取快照" : "刷新报价"}`;
 }
 
-// ---- 详情 ----
-async function openDetail(id, silent) {
-  state.openId = Number(id);
-  $("#detail").hidden = false;
-  if (!silent) { $("#detail-title").textContent = "加载中…"; $("#detail-body").innerHTML = ""; }
-  let it;
-  if (MODE === "server") {
-    const res = await fetchJson(`/api/item?goods_id=${id}`);
-    if (!res.ok) { $("#detail-title").textContent = "失败"; $("#detail-body").innerHTML = `<div class="none">出错：${esc(res.reason)}</div>`; return; }
-    it = res.item;
-  } else {
-    it = ALL.find((x) => x.goods_id === Number(id));
-    if (!it) return;
-  }
-  const now = Date.now() / 1000;
-  const age = ageInfo(it.source_updated_at, now);
-  const isExact = it.steam_mode === "exact" || (MODE === "server" && it.steam_mode === "proxy");
-  $("#detail-title").textContent = it.name_cn || it.market_hash_name;
-  $("#detail-body").innerHTML = `
-    <div class="kv"><span>Steam 行情名</span><b>${esc(it.market_hash_name)}</b></div>
-    <div class="kv"><span>BUFF 最低卖(CNY)</span><b>${priceCell(it.buff_min_sell)}${it.source_updated_at ? "" : " <em class='none'>(快照)</em>"}</b></div>
-    <div class="kv"><span>真实挂单数</span><b>${it.listing_count ?? `<span class='none'>仅关注列表实时</span>`}</b></div>
-    <div class="kv"><span>在售量</span><b>${it.sell_num ?? "--"}</b></div>
-    <div class="kv"><span>Steam 参考价(CNY)</span><b>${steamCell(it)}</b></div>
-    <div class="kv"><span>估算净入账(精确舍入)</span><b>${netCell(it)}</b></div>
-    <div class="kv"><span>余额比例</span><b>${ratioCell(it)} <em class="none">(${isExact ? "国服·准" : "全球估·偏高"})</em></b></div>
-    <div class="kv"><span>挂单源时间</span><b>${fmtTime(it.source_updated_at)} <em class="${age.cls}">${age.label}</em></b></div>
-    <div class="kv"><span>UU 报价</span><b class="none">暂无报价（通道未接入）</b></div>
-    <div class="links"><a href="${it.buff_url || BUFF_URL(it.goods_id)}" target="_blank" rel="noopener">在 BUFF 核对</a>
-      <a href="${it.steam_url || STEAM_URL(it.market_hash_name)}" target="_blank" rel="noopener">在 Steam 核对</a></div>`;
-}
-
 // ---- 事件 ----
 $("#go").addEventListener("click", () => { runSearch(false); startLoop(); });
 $("#q").addEventListener("keydown", (e) => { if (e.key === "Enter") { runSearch(false); startLoop(); } });
 $("#sort").addEventListener("change", () => { runSearch(false); startLoop(); });
+$("#minvol").addEventListener("change", () => { if (MODE === "static") runSearch(false); });
+$("#scope").addEventListener("change", () => { runSearch(false); startLoop(); });
 $("#auto").addEventListener("change", startLoop);
 $("#interval").addEventListener("change", startLoop);
 $("#refresh").addEventListener("click", async () => {
   if (MODE === "static") { await reloadStatic(); if (state.keyword) runSearch(false); }
   else { await fetch("api/refresh"); setTimeout(loadStatus, 1500); }
 });
-$("#rows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) openDetail(tr.dataset.id, false); });
-$("#detail-close").addEventListener("click", () => { $("#detail").hidden = true; state.openId = null; });
 
 boot();
