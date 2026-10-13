@@ -9,9 +9,9 @@ from __future__ import annotations
 # 不含散落贴纸/印花/喷涂/布章本身(它们不是"箱子")。英文带前导空格避免误伤。
 _BOX_TERMS = (
     # 英文
-    " case", " capsule", " key", " package", " music kit", "collection",
+    " case", " capsule", " key", " package", "collection",
     # 中文
-    "终端", "武器箱", "箱子", "胶囊", "钥匙", "音乐盒", "音乐包", "纪念品包", "收藏包",
+    "终端", "武器箱", "箱子", "胶囊", "钥匙", "纪念品包", "收藏包",
 )
 
 
