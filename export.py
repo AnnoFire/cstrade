@@ -115,7 +115,7 @@ def build() -> int:
         if not so.get("ok") or not so["data"]["buff_min_sell"]:
             continue  # 实时取不到就留给全量兜底
         d = so["data"]
-        st = steam.fetch_priceoverview(hn)  # 境外 runner 可得国服价+成交量
+        st = steam.fetch_priceoverview(hn, timeout=10, attempts=1)  # 境外 runner 可得国服价+成交量
         if st.get("ok") and st.get("lowest_sell") is not None:
             row = _row(hn, cn, gid, agg_steam, agg_buff, fx, "exact",
                        buff_min=d["buff_min_sell"], sell_num=d["sell_num"],
@@ -152,14 +152,11 @@ def build() -> int:
         def _rank(items):
             return sorted(items, key=lambda r: -(r["ratio_pct"] or 0))[: cfg.board_size]
 
-        chosen = _rank(pool) + [r for r in _rank([x for x in pool if x.get("cat") == "box"])]
-        seen = set()
+        chosen = _rank(pool) + _rank([x for x in pool if x.get("cat") == "box"])
+        seen: set[int] = set()
         cands = [r for r in chosen if not (id(r) in seen or seen.add(id(r)))]
-        for r in cands:
-            st = steam.fetch_priceoverview(r["market_hash_name"])
-            if not st.get("ok"):
-                continue
-            steam_ok = True
+
+        def _apply(r: dict, st: dict) -> None:
             r["volume"] = st.get("volume")
             if st.get("lowest_sell") is not None:
                 r["steam_ref_cny"] = st["lowest_sell"]
@@ -167,7 +164,22 @@ def build() -> int:
                 net = steam_fee.calculate_after_fee(st["lowest_sell"])
                 r["steam_net_est"] = net
                 r["ratio_pct"] = steam_fee.balance_ratio(net, r["buff_min_sell"])
-            time.sleep(cfg.steam_delay_sec)  # 保守限速，降低被 Steam 限流概率
+
+        # 连通性探测：runner 到 Steam 常受限。先试 1 件(短超时)，连不上就整段跳过，
+        # 避免几十件各等超时把构建拖到被 cancel-in-progress 取消。
+        if cands:
+            probe = steam.fetch_priceoverview(cands[0]["market_hash_name"], timeout=8, attempts=1)
+            if probe.get("ok"):
+                steam_ok = True
+                _apply(cands[0], probe)
+                for r in cands[1:]:
+                    st = steam.fetch_priceoverview(r["market_hash_name"], timeout=10, attempts=1)
+                    if not st.get("ok"):
+                        continue
+                    _apply(r, st)
+                    time.sleep(0.5)  # 轻限速
+            else:
+                print("[export] Steam 探测不可达，跳过逐件成交量抓取(全量仍走全球估)")
 
     exact_cnt = sum(1 for r in by_hash.values() if r["steam_mode"] == "exact")
     data = {

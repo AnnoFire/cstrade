@@ -56,8 +56,8 @@ async function loadStatus() {
   const banner = $("#banner");
   if (META.steam_mode !== "proxy_or_runner") {
     banner.hidden = false; banner.className = "banner warnbox";
-    banner.innerHTML = "当前为<b>全球估算(偏乐观)</b>、每日快照。默认榜只收“已知 24h 成交量 ≥ 阈值”的精确件——" +
-      "需在能连 Steam 的境外 GitHub Actions runner 上构建才会填充；本机/无出口时默认榜为空，搜索仍可用。";
+    banner.innerHTML = "当前为<b>全球估算(偏乐观)</b>、每日快照，已按最低价去噪。要精确国服价与 24h 成交量过滤，" +
+      "需构建时能连 Steam 的境外 runner——部署到 GitHub Actions 后自动填充，榜上件会标『精确』。";
   } else {
     banner.hidden = false; banner.className = "banner okbox";
     banner.textContent = "本次快照含关注列表的国服精确价；其余为全量估算。";
@@ -106,9 +106,15 @@ function minVol() { return +($("#minvol").value || 0); }
 function staticSearch(q, sort, scope) {
   const mv = minVol(), kw = q.toLowerCase(), box = scope === "box";
   let rows;
+  const hasAnyVol = ALL.some((it) => it.volume != null);
   if (!q) {
-    // 默认榜：箱子范围 + "已知成交量且 ≥ 阈值"的精确件（需能连 Steam 的 runner 才有）
-    rows = ALL.filter((it) => (!box || it.cat === "box") && it.volume != null && it.volume >= mv);
+    if (hasAnyVol) {
+      // 有成交量数据(部署在能连 Steam 的 runner)：精确榜,按阈值过滤
+      rows = ALL.filter((it) => (!box || it.cat === "box") && it.volume != null && it.volume >= mv);
+    } else {
+      // 无成交量数据：回落"最低价去噪"的全球估榜,保证有内容
+      rows = ALL.filter((it) => (!box || it.cat === "box") && (it.buff_min_sell || 0) >= 3);
+    }
   } else {
     rows = ALL.filter((it) => (it.market_hash_name || "").toLowerCase().includes(kw)
       || (it.name_cn || "").toLowerCase().includes(kw));

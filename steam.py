@@ -41,8 +41,10 @@ def _opener(proxy: str | None):
     return urllib.request.build_opener(*handlers)
 
 
-def fetch_priceoverview(market_hash_name: str) -> dict:
-    """取单件 Steam 参考价。返回 {ok, lowest_sell, median, reason}。"""
+def fetch_priceoverview(market_hash_name: str, *, timeout: int | None = None,
+                        attempts: int = 2) -> dict:
+    """取单件 Steam 参考价。返回 {ok, lowest_sell, median, volume, reason}。
+    timeout/attempts 可调：榜批量抓取用短超时+少重试，连不上时快速止损不拖垮构建。"""
     cfg = config.get_config()
     params = urllib.parse.urlencode(
         {
@@ -54,16 +56,17 @@ def fetch_priceoverview(market_hash_name: str) -> dict:
     url = f"{cfg.steam_base}/market/priceoverview/?{params}"
     req = urllib.request.Request(url, headers={"User-Agent": cfg.user_agent})
     opener = _opener(cfg.steam_proxy)
+    to = timeout if timeout is not None else cfg.request_timeout_sec
 
     last_reason = "unknown"
-    for attempt in range(2):
+    for attempt in range(attempts):
         try:
-            with opener.open(req, timeout=cfg.request_timeout_sec) as resp:
+            with opener.open(req, timeout=to) as resp:
                 payload = json.loads(resp.read().decode("utf-8", errors="replace"))
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             last_reason = f"steam_unreachable:{type(exc).__name__}"
-            if attempt == 0:
-                time.sleep(cfg.backoff_base_sec)
+            if attempt == 0 and attempts > 1:
+                time.sleep(min(2, cfg.backoff_base_sec))
             continue
 
         if not payload.get("success"):
